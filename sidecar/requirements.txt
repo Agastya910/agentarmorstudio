@@ -1,0 +1,12 @@
+# AgentArmor Studio — Sidecar Dependencies
+# Install with: pip install -r requirements.txt
+
+agentarmor-core
+fastapi>=0.110
+uvicorn[standard]>=0.27
+httpx>=0.27
+
+# Real tool implementations
+tavily-python>=0.5          # Web search (get free key at tavily.com)
+beautifulsoup4>=4.12        # HTML stripping for tool_web_fetch
+e2b-code-interpreter>=1.0  # Code execution sandbox (optional, needs E2B_API_KEY)
