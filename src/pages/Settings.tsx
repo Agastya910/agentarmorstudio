@@ -13,6 +13,7 @@ import {
   Globe,
   Code,
   CheckCircle2,
+  Lock,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -70,6 +71,12 @@ export default function SettingsPage() {
   const [savingApiKeys, setSavingApiKeys] = useState(false);
   const [apiKeySaved, setApiKeySaved] = useState(false);
 
+  // Network Policy
+  const [allowHttp, setAllowHttp] = useState(false);
+  const [maxPayload, setMaxPayload] = useState("1024");
+  const [savingPolicy, setSavingPolicy] = useState(false);
+  const [policySaved, setPolicySaved] = useState(false);
+
   // Manual registration form
   const [agentName, setAgentName] = useState("");
   const [agentFramework, setAgentFramework] = useState("custom");
@@ -93,6 +100,11 @@ export default function SettingsPage() {
         setTavilyConfigured(extResp.tavily_configured);
         setE2bConfigured(extResp.e2b_configured);
       } catch { /* sidecar not available */ }
+      try {
+        const polResp = await apiFetch<{ allow_http: boolean; max_payload: string }>("/settings/network-policy");
+        setAllowHttp(polResp.allow_http);
+        setMaxPayload(polResp.max_payload);
+      } catch { /* */ }
     };
     load();
     const id = setInterval(load, 5_000);
@@ -155,6 +167,20 @@ export default function SettingsPage() {
       setTimeout(() => setApiKeySaved(false), 3000);
     } catch { /* */ }
     setSavingApiKeys(false);
+  };
+
+  const handleSaveNetworkPolicy = async () => {
+    setSavingPolicy(true);
+    setPolicySaved(false);
+    try {
+      await apiFetch("/settings/network-policy", {
+        method: "POST",
+        body: JSON.stringify({ allow_http: allowHttp, max_payload: maxPayload }),
+      });
+      setPolicySaved(true);
+      setTimeout(() => setPolicySaved(false), 3000);
+    } catch { /* */ }
+    setSavingPolicy(false);
   };
 
   const handleUnregister = async (agentId: string) => {
@@ -304,9 +330,92 @@ export default function SettingsPage() {
             ) : apiKeySaved ? (
               <CheckCircle2 className="h-3 w-3 text-emerald-400" />
             ) : (
-              <Key className="h-3 w-3" />
             )}
             {apiKeySaved ? "Saved!" : "Save Keys"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* ── L5 Network Policy ── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Lock className="h-4 w-4 text-emerald-400" />
+            L5 Network Policy
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-gray-500">
+            Global constraints for agent network execution. AgentArmor enforces these at the execution layer.
+          </p>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="text-xs font-medium text-gray-300">Require HTTPS Only</label>
+                <p className="text-[10px] text-gray-500 mt-0.5">Block plaintext HTTP requests outbound.</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={!allowHttp}
+                onClick={() => setAllowHttp(!allowHttp)}
+                className={cn(
+                  "relative inline-flex h-5 w-9 items-center rounded-full transition-colors flex-none",
+                  !allowHttp ? "bg-emerald-500" : "bg-gray-700"
+                )}
+              >
+                <span
+                  className={cn(
+                    "inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform",
+                    !allowHttp ? "translate-x-[18px]" : "translate-x-[3px]"
+                  )}
+                />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="text-xs font-medium text-gray-300">DNS Rebinding Protection</label>
+                <p className="text-[10px] text-gray-500 mt-0.5">Always enforces resolution against 127.0.0.1 and known private blocks.</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={true}
+                disabled
+                className="relative inline-flex h-5 w-9 items-center rounded-full bg-emerald-500 opacity-50 cursor-not-allowed"
+              >
+                <span className="inline-block h-3.5 w-3.5 transform rounded-full bg-white translate-x-[18px]" />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-gray-300">Max Outbound Payload (KB)</label>
+              <input
+                type="number"
+                value={maxPayload}
+                onChange={(e) => setMaxPayload(e.target.value)}
+                placeholder="1024"
+                className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-2 text-xs text-gray-200 focus:border-brand-500/50 focus:outline-none focus:ring-1 focus:ring-brand-500/20"
+              />
+            </div>
+          </div>
+
+          <Button
+            size="sm"
+            onClick={handleSaveNetworkPolicy}
+            disabled={savingPolicy}
+            className="gap-1.5"
+          >
+            {savingPolicy ? (
+              <RefreshCw className="h-3 w-3 animate-spin" />
+            ) : policySaved ? (
+              <CheckCircle2 className="h-3 w-3 text-emerald-400" />
+            ) : (
+              <Lock className="h-3 w-3" />
+            )}
+            {policySaved ? "Saved!" : "Save Policy"}
           </Button>
         </CardContent>
       </Card>

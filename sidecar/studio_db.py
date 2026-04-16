@@ -15,6 +15,9 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from agentarmor.crypto.keys import get_api_key_key, get_db_key
+from agentarmor.crypto.encryption import encrypt_field, decrypt_field, is_encrypted, compute_mac, verify_mac
+
 AGENTARMOR_DIR = Path.home() / ".agentarmor"
 STUDIO_DB_PATH = AGENTARMOR_DIR / "studio.db"
 
@@ -59,7 +62,8 @@ class StudioDB:
                 events_count INTEGER DEFAULT 0,
                 blocked_count INTEGER DEFAULT 0,
                 permissions TEXT DEFAULT '["*"]',
-                port INTEGER DEFAULT 0
+                port INTEGER DEFAULT 0,
+                network_policy TEXT DEFAULT '{}'
             );
 
             CREATE TABLE IF NOT EXISTS events (
@@ -104,9 +108,17 @@ class StudioDB:
                 timestamp TEXT NOT NULL,
                 tool_calls TEXT DEFAULT '[]',
                 security_events TEXT DEFAULT '[]',
+                _mac TEXT DEFAULT '',
                 FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id)
             );
         """)
+        c.commit()
+        
+        # Dynamic L2 Migration for _mac columns
+        try: c.execute("ALTER TABLE events ADD COLUMN _mac TEXT DEFAULT ''")
+        except sqlite3.OperationalError: pass
+        try: c.execute("ALTER TABLE messages ADD COLUMN _mac TEXT DEFAULT ''")
+        except sqlite3.OperationalError: pass
         c.commit()
 
     # ── Agent Registry ───────────────────────────────────────────────
@@ -131,6 +143,7 @@ class StudioDB:
             agent["permissions"] = json.loads(agent.get("permissions", "[]"))
             agent["layers_enabled"] = json.loads(agent.get("layers_enabled", "[]"))
             agent["tools_enabled"] = json.loads(agent.get("tools_enabled", "[]"))
+            agent["network_policy"] = json.loads(agent.get("network_policy", "{}"))
             # Mark non-studio agents offline if no heartbeat for 60s
             if agent["agent_id"] != "studio":
                 try:
@@ -156,18 +169,25 @@ class StudioDB:
         provider: str = "ollama",
         provider_model: str = "",
         port: int = 0,
+        network_policy: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         c = self._conn()
         now = _now_iso()
+        # Handle migration for network_policy
+        try:
+            c.execute("ALTER TABLE agents ADD COLUMN network_policy TEXT DEFAULT '{}'")
+        except sqlite3.OperationalError:
+            pass
         c.execute("""
             INSERT INTO agents (agent_id, name, framework, agent_type, system_prompt,
                                layers_enabled, tools_enabled, provider, provider_model,
-                               created_at, last_heartbeat, status, permissions, port)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'online', ?, ?)
+                               created_at, last_heartbeat, status, permissions, port, network_policy)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'online', ?, ?, ?)
             ON CONFLICT(agent_id) DO UPDATE SET
                 framework=excluded.framework, agent_type=excluded.agent_type,
                 last_heartbeat=excluded.last_heartbeat, status='online',
                 permissions=excluded.permissions, port=excluded.port,
+                network_policy=CASE WHEN excluded.network_policy != '{}' THEN excluded.network_policy ELSE agents.network_policy END,
                 name=CASE WHEN excluded.name != '' THEN excluded.name ELSE agents.name END,
                 system_prompt=CASE WHEN excluded.system_prompt != '' THEN excluded.system_prompt ELSE agents.system_prompt END
         """, (
@@ -175,7 +195,7 @@ class StudioDB:
             json.dumps(layers_enabled or []), json.dumps(tools_enabled or []),
             provider, provider_model, now, now,
             json.dumps(permissions or ["scan.*", "read.*", "search.*"]),
-            port,
+            port, json.dumps(network_policy or {}),
         ))
         c.commit()
         return {"agent_id": agent_id, "registered_at": now}
@@ -208,25 +228,42 @@ class StudioDB:
 
     def store_event(self, entry: dict[str, Any]):
         c = self._conn()
+        db_key = get_db_key()
+        
+        event_id = entry.get("event_id", "")
+        agent_id = entry.get("agent_id", "")
+        layer = entry.get("layer", "")
+        verdict = entry.get("verdict", "")
+        threat_level = entry.get("threat_level", "")
+        
+        details_str = json.dumps(entry.get("details", entry.get("params", {})), default=str)
+        enc_details = encrypt_field(details_str, db_key)
+        
+        mac_data = {
+            "event_id": event_id,
+            "agent_id": agent_id,
+            "layer": layer,
+            "verdict": verdict,
+            "threat_level": threat_level,
+            "details": details_str
+        }
+        mac = compute_mac(mac_data, db_key)
+        
         c.execute("""
             INSERT INTO events (timestamp, event_id, agent_id, layer, event_type,
                                action, verdict, threat_level, message, details,
-                               tool_name, tool_args, latency_ms)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                               tool_name, tool_args, latency_ms, _mac)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             entry.get("_timestamp", entry.get("timestamp", 0)),
-            entry.get("event_id", ""),
-            entry.get("agent_id", ""),
-            entry.get("layer", ""),
+            event_id, agent_id, layer,
             entry.get("event_type", entry.get("type", "")),
-            entry.get("action", ""),
-            entry.get("verdict", ""),
-            entry.get("threat_level", ""),
-            entry.get("message", ""),
-            json.dumps(entry.get("details", entry.get("params", {})), default=str),
+            entry.get("action", ""), verdict, threat_level,
+            entry.get("message", ""), enc_details,
             entry.get("tool_name", ""),
             json.dumps(entry.get("tool_args", {}), default=str),
             entry.get("latency_ms", entry.get("processing_time_ms", 0)),
+            mac
         ))
         c.commit()
 
@@ -247,7 +284,41 @@ class StudioDB:
         query += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
         rows = c.execute(query, params).fetchall()
-        return [dict(r) for r in reversed(rows)]
+        
+        results = []
+        db_key = get_db_key()
+        for r in reversed(rows):
+            evt = dict(r)
+            raw_details = evt.get("details", "{}")
+            if is_encrypted(raw_details):
+                try:
+                    evt["details"] = json.loads(decrypt_field(raw_details, db_key))
+                except Exception:
+                    evt["details"] = {"error": "L2_TAMPER_ALERT_DECRYPTION_FAILED"}
+            else:
+                try:
+                    evt["details"] = json.loads(raw_details)
+                except:
+                    evt["details"] = {}
+                    
+            if evt.get("_mac"):
+                mac_data = {
+                    "event_id": evt.get("event_id", ""),
+                    "agent_id": evt.get("agent_id", ""),
+                    "layer": evt.get("layer", ""),
+                    "verdict": evt.get("verdict", ""),
+                    "threat_level": evt.get("threat_level", ""),
+                    "details": json.dumps(evt.get("details", {}), default=str) if "error" not in evt["details"] else raw_details
+                }
+                # Fallback check uses the raw details string if json dump mismatch due to formatting
+                mac_data_raw = mac_data.copy()
+                mac_data_raw["details"] = raw_details if not is_encrypted(raw_details) else decrypt_field(raw_details, db_key)
+                if not verify_mac(mac_data, evt["_mac"], db_key) and not verify_mac(mac_data_raw, evt["_mac"], db_key):
+                    evt["threat_level"] = "CRITICAL (L2_TAMPER_ALERT)"
+                    evt["message"] = f"[L2 Tamper Alert: MAC Signature Invalid] {evt.get('message', '')}"
+            results.append(evt)
+            
+        return results
 
     def get_events_summary(self) -> dict[str, Any]:
         c = self._conn()
@@ -264,12 +335,22 @@ class StudioDB:
     def get_setting(self, key: str, default: str = "") -> str:
         c = self._conn()
         row = c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-        return row["value"] if row else default
+        if not row:
+            return default
+            
+        val = row["value"]
+        if is_encrypted(val):
+            try:
+                return decrypt_field(val, get_api_key_key())
+            except Exception:
+                return default
+        return val
 
     def set_setting(self, key: str, value: str):
         c = self._conn()
+        enc_val = encrypt_field(value, get_api_key_key()) if value else value
         c.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                  (key, value))
+                  (key, enc_val))
         c.commit()
 
     # ── Conversation History ──────────────────────────────────────────
@@ -309,10 +390,39 @@ class StudioDB:
             (conversation_id,),
         ).fetchall()
         result = []
+        db_key = get_db_key()
+        
         for r in rows:
             msg = dict(r)
-            msg["tool_calls"] = json.loads(msg.get("tool_calls") or "[]")
+            
+            raw_content = msg["content"]
+            if is_encrypted(raw_content):
+                try:
+                    msg["content"] = decrypt_field(raw_content, db_key)
+                except Exception:
+                    msg["content"] = "[L2 Tamper Alert: Content Data Corrupted/Forged]"
+                    
+            raw_tc = msg.get("tool_calls") or "[]"
+            if is_encrypted(raw_tc):
+                try:
+                    raw_tc = decrypt_field(raw_tc, db_key)
+                except Exception:
+                    raw_tc = "[]"
+                    
+            msg["tool_calls"] = json.loads(raw_tc)
             msg["security_events"] = json.loads(msg.get("security_events") or "[]")
+            
+            if msg.get("_mac"):
+                mac_data = {
+                    "conversation_id": msg["conversation_id"],
+                    "role": msg["role"],
+                    "content": msg["content"],
+                    "timestamp": msg["timestamp"],
+                    "tool_calls": raw_tc
+                }
+                if not verify_mac(mac_data, msg["_mac"], db_key):
+                    msg["content"] = f"[L2 Tamper Alert: MAC Signature Invalid] {msg['content']}"
+                    
             result.append(msg)
         return result
 
@@ -327,12 +437,26 @@ class StudioDB:
         """Append a message to a conversation and touch updated_at."""
         now = _now_iso()
         c = self._conn()
+        db_key = get_db_key()
+        
+        enc_content = encrypt_field(content, db_key)
+        tc_str = json.dumps(tool_calls or [])
+        enc_tc = encrypt_field(tc_str, db_key) if tool_calls else tc_str
+        
+        mac_data = {
+            "conversation_id": conversation_id,
+            "role": role,
+            "content": content,
+            "timestamp": now,
+            "tool_calls": tc_str
+        }
+        mac = compute_mac(mac_data, db_key)
+        
         cursor = c.execute(
-            "INSERT INTO messages (conversation_id, role, content, timestamp, tool_calls, security_events) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO messages (conversation_id, role, content, timestamp, tool_calls, security_events, _mac) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
-                conversation_id, role, content, now,
-                json.dumps(tool_calls or []),
-                json.dumps(security_events or []),
+                conversation_id, role, enc_content, now,
+                enc_tc, json.dumps(security_events or []), mac
             ),
         )
         c.execute("UPDATE conversations SET updated_at=? WHERE conversation_id=?", (now, conversation_id))

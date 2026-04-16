@@ -1,0 +1,30 @@
+{
+  "layer": "L1_ingestion",
+  "verdict": "allow",
+  "threat_level": "low",
+  "message": "Minor anomalies detected. Request allowed.",
+  "modified_data": null,
+  "details": {
+    "vector": "user_input",
+    "source": "user",
+    "defenses_applied": [
+      "D1",
+      "D2",
+      "D3",
+      "D4"
+    ],
+    "anomalies_found": [
+      {
+        "type": "zero_width_chars:7_instances",
+        "severity": 2
+      }
+    ],
+    "processing_ms": 1593.12,
+    "regex_categories_matched": [],
+    "unicode_anomalies": 1,
+    "classifier_label": "UNKNOWN",
+    "classifier_confidence": 0.0,
+    "perplexity_score": 113.91153717041016
+  },
+  "processing_time_ms": 0.0
+}

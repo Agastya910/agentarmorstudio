@@ -1,0 +1,24 @@
+{
+  "layer": "L1_ingestion",
+  "verdict": "allow",
+  "threat_level": "none",
+  "message": "Input cleanly passed all L1 checks.",
+  "modified_data": null,
+  "details": {
+    "vector": "user_input",
+    "source": "user",
+    "defenses_applied": [
+      "D1",
+      "D2",
+      "D3",
+      "D4"
+    ],
+    "anomalies_found": [],
+    "processing_ms": 100.82,
+    "regex_categories_matched": [],
+    "classifier_label": "UNKNOWN",
+    "classifier_confidence": 0.0,
+    "perplexity_score": 724.140380859375
+  },
+  "processing_time_ms": 0.0
+}

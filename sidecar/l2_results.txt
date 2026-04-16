@@ -1,0 +1,63 @@
+AgentArmor L1 (D3) skipped: You are trying to access a gated repo.
+Make sure to have access to it at https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-22M.
+401 Client Error. (Request ID: Root=1-69c7026e-23357bf73b917ee3675d3a27;8c2b5d92-8f52-48f1-82da-b271dfbf982d)
+
+Cannot access gated repo for url https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-22M/resolve/main/config.json.
+Access to model meta-llama/Llama-Prompt-Guard-2-22M is restricted. You must have access to it and be authenticated to access it. Please log in.
+============================================================
+  L2 STORAGE ENCRYPTION VALIDATION SUITE
+============================================================
+
+[0] Key Infrastructure Check...
+  Master key derived in 72.1ms
+  install.salt exists: True
+  install.salt size: 32 bytes
+  Master key length: 32 bytes
+  DB child key length: 32 bytes
+  API child key length: 32 bytes
+  Keys are different: True
+  -> PASS: Key hierarchy operational ✅
+
+[1] Settings API Key Encryption (Sub-Task C)...
+  Raw SQLite value: AA2:floeB1pGtOK4QM0r0-5V5H3JCZgUtWyLE5DYfMXzQVMspC...
+  -> PASS: Setting is AES-256-GCM encrypted (AA2: prefix) ✅
+  Decrypted value: sk-LIVE-1234567890abcdef
+  -> PASS: Round-trip encrypt/decrypt verified ✅
+
+[2] Conversation Message Encryption (Sub-Task D)...
+  Raw SQLite content: AA2:n8NnogajnvYscf0pskG2imwg-_7nBXldBKWMoJvS0nxvR_...
+  HMAC-SHA256 MAC: 8c4d2ff618f0db45f628d056903b28edc66d4613334a4eb9258c48218af2cb50
+  -> PASS: Message content is AES-256-GCM encrypted ✅
+  -> PASS: HMAC-SHA256 integrity MAC stored ✅
+  Decrypted content: My secret password is hunter2
+  -> PASS: Message round-trip decrypt verified ✅
+
+[3] Security Event Details Encryption (Sub-Task E)...
+  Raw SQLite details: AA2:_Oli6kugUgvDoTTYqdANnINRghltrcO8Dnp2sTVN-Cq-Pz...
+  Event MAC: b9c3218a45b4f714a0a59fa265d66f129e90e7ea5af695338eaabd5e9c68e19a
+  -> PASS: Event details are AES-256-GCM encrypted ✅
+  -> PASS: Event HMAC integrity MAC stored ✅
+  Decrypted details: {
+  "matched_pattern": "system_override",
+  "input_preview": "ignore previous instructions"
+}
+  -> PASS: Event details round-trip decrypt verified ✅
+
+[4] L2 Tamper Detection (Memory Poisoning Defense)...
+  Simulating attacker: directly editing message ciphertext in SQLite...
+  Result after tamper: [L2 Tamper Alert: MAC Signature Invalid] [L2 Tamper Alert: Content Data Corrupte...
+  -> PASS: Tamper Alert triggered! AES-GCM auth failed + MAC mismatch ✅
+
+[5] Latency Budget Check...
+  encrypt_field avg: 0.005ms (target: <1ms)
+  decrypt_field avg: 0.005ms (target: <1ms)
+  compute_mac avg: 0.010ms (target: <0.5ms)
+  -> PASS: All operations within latency budget ✅
+
+============================================================
+  L2 VALIDATION COMPLETE
+============================================================
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+
+Loading weights:   0%|          | 0/148 [00:00<?, ?it/s]
+Loading weights: 100%|##########| 148/148 [00:00<00:00, 5976.75it/s]

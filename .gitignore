@@ -1,0 +1,16 @@
+node_modules/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+*.log
+.env
+.DS_Store
+
+# Tauri build artifacts
+src-tauri/target/
+src-tauri/binaries/
+
+# Test artifacts
+test_*.log

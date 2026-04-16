@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import os
+import platform
+import hashlib
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -46,6 +48,9 @@ class AgentWorkspace:
     def _ensure_dirs(self):
         self._base.mkdir(parents=True, exist_ok=True)
         self._workspace.mkdir(parents=True, exist_ok=True)
+        if platform.system() != "Windows":
+            os.chmod(self._base, 0o700)
+            os.chmod(self._workspace, 0o700)
 
     # ── Database ─────────────────────────────────────────────────────
 
@@ -54,6 +59,24 @@ class AgentWorkspace:
         conn = sqlite3.connect(str(self._db_path))
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
+        
+        # Enforce secure file permissions on sqlite artifacts
+        if platform.system() != "Windows":
+            for f in [self._db_path, self._db_path.with_name("agent.db-wal"), self._db_path.with_name("agent.db-shm")]:
+                if f.exists():
+                    os.chmod(f, 0o600)
+                    
+        # Ensure audit hash table exists
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS _agentarmor_writes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                payload_hash TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+        
         return conn
 
     def execute_sql(self, sql: str) -> str:
@@ -76,6 +99,17 @@ class AgentWorkspace:
                         "status": "error",
                         "message": "Error: AgentArmor L1 blocked SQL execution — injection pattern detected in data payload"
                     }, indent=2)
+                    
+                # L2 Tamper Audit: Hash write payloads into append-only table
+                if sql_lower.startswith(("insert", "update")):
+                    import datetime
+                    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    payload_hash = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+                    conn.execute(
+                        "INSERT INTO _agentarmor_writes (timestamp, operation, payload_hash) VALUES (?, ?, ?)",
+                        (now, sql_lower.split()[0].upper(), payload_hash)
+                    )
+                    
                 conn.commit()
                 return json.dumps({
                     "status": "success",

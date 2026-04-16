@@ -61,6 +61,11 @@ export default function Builder({ onNavigate }: { onNavigate?: (page: string) =>
   const [providerModel, setProviderModel] = useState("");
   const [ollamaModels, setOllamaModels] = useState<string[]>(["llama3.2"]);
   
+  // Network Policy
+  const [isolationLevel, setIsolationLevel] = useState("ALLOWLIST");
+  const [domainAllowlist, setDomainAllowlist] = useState("");
+  const [blockedDomains, setBlockedDomains] = useState("");
+  
   const [isDeploying, setIsDeploying] = useState(false);
 
   useEffect(() => {
@@ -119,6 +124,9 @@ export default function Builder({ onNavigate }: { onNavigate?: (page: string) =>
           provider_api_key: providerApiKey.trim(),
           layers: Array.from(enabledLayers).sort(),
           tools: Array.from(enabledTools),
+          isolation_level: isolationLevel,
+          domain_allowlist: domainAllowlist.trim(),
+          blocked_domains: blockedDomains.trim(),
         }),
       });
 
@@ -315,6 +323,64 @@ export default function Builder({ onNavigate }: { onNavigate?: (page: string) =>
                   </button>
                 );
               })}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* L5 Network Routing */}
+        <div className="col-span-1 space-y-6">
+          <Card className="border-gray-800 bg-gray-900/50 h-full">
+            <CardHeader className="pb-3 border-b border-gray-800/50">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Globe className="h-4 w-4 text-blue-400" />
+                Network Routing
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Control agent network access.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-4 space-y-4">
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-gray-300">Isolation Level</label>
+                <select
+                  value={isolationLevel}
+                  onChange={(e) => setIsolationLevel(e.target.value)}
+                  className="w-full h-9 rounded-md border border-gray-700 bg-gray-950 px-3 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                >
+                  <option value="ALLOWLIST">Allowlist Only (Recommended)</option>
+                  <option value="OPEN">Open (All egress allowed)</option>
+                  <option value="ISOLATED">Strictly Isolated</option>
+                </select>
+              </div>
+
+              {isolationLevel === "ALLOWLIST" && (
+                <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
+                  <label className="text-xs font-medium text-gray-300">Domain Allowlist</label>
+                  <textarea
+                    value={domainAllowlist}
+                    onChange={(e) => setDomainAllowlist(e.target.value)}
+                    rows={2}
+                    className="w-full rounded-md border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-200 focus:outline-none focus:ring-1 focus:ring-brand-500 resize-none font-mono"
+                    placeholder="api.github.com, example.com"
+                  />
+                </div>
+              )}
+              
+              {isolationLevel !== "ISOLATED" && (
+                <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
+                  <label className="text-xs font-medium text-gray-300">Domain Blocklist</label>
+                  <p className="text-[10px] text-gray-500 mt-0.5 leading-tight">
+                    Overrides Allowlist. Internal IPs are blocked globally via L5 configuration.
+                  </p>
+                  <textarea
+                    value={blockedDomains}
+                    onChange={(e) => setBlockedDomains(e.target.value)}
+                    rows={2}
+                    className="w-full rounded-md border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-200 focus:outline-none focus:ring-1 focus:ring-brand-500 resize-none font-mono"
+                    placeholder="malicious.com"
+                  />
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
