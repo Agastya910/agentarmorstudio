@@ -4,9 +4,10 @@
 use std::sync::Mutex;
 use tauri::Manager;
 
-/// Global state holding the sidecar child process handle.
+/// Global state holding the sidecar child process handle and any launch errors.
 struct SidecarState {
     child: Mutex<Option<std::process::Child>>,
+    launch_error: Mutex<Option<String>>,
 }
 
 /// Tauri command: read the sidecar port from the temp file.
@@ -15,7 +16,7 @@ fn get_sidecar_port() -> Result<u16, String> {
     let port_file = std::env::temp_dir().join("agentarmor_sidecar.port");
 
     // Retry a few times — the sidecar may still be starting up
-    for _ in 0..20 {
+    for _ in 0..40 {
         if let Ok(contents) = std::fs::read_to_string(&port_file) {
             if let Ok(port) = contents.trim().parse::<u16>() {
                 return Ok(port);
@@ -25,37 +26,121 @@ fn get_sidecar_port() -> Result<u16, String> {
     }
 
     Err(format!(
-        "Could not read sidecar port from {}",
+        "Could not read sidecar port from {}. The sidecar may have failed to start.",
         port_file.display()
     ))
 }
 
-/// Spawn the Python FastAPI sidecar process.
+/// Tauri command: return sidecar diagnostic info for the frontend.
+#[tauri::command]
+fn get_sidecar_status(state: tauri::State<SidecarState>) -> Result<String, String> {
+    // Check if there was a launch error
+    if let Ok(err) = state.launch_error.lock() {
+        if let Some(ref e) = *err {
+            return Err(format!("Sidecar failed to start: {e}"));
+        }
+    }
+
+    // Check if the child process is still alive
+    if let Ok(mut guard) = state.child.lock() {
+        if let Some(ref mut child) = *guard {
+            match child.try_wait() {
+                Ok(Some(exit_status)) => {
+                    return Err(format!(
+                        "Sidecar process exited unexpectedly with status: {exit_status}"
+                    ));
+                }
+                Ok(None) => {
+                    // Still running — good
+                    return Ok("Sidecar is running".to_string());
+                }
+                Err(e) => {
+                    return Err(format!("Could not check sidecar status: {e}"));
+                }
+            }
+        }
+    }
+
+    Err("Sidecar was never started".to_string())
+}
+
+/// Spawn the sidecar process.
+///
+/// - **Dev mode**: runs `python ../sidecar/main.py`
+/// - **Release mode**: runs the bundled `agentarmor-sidecar.exe` next to the main executable
 fn spawn_sidecar() -> Result<std::process::Child, String> {
-    // Resolve the sidecar script path relative to the executable
     let exe_dir = std::env::current_exe()
         .map(|p| p.parent().unwrap_or(std::path::Path::new(".")).to_path_buf())
         .unwrap_or_else(|_| std::path::PathBuf::from("."));
 
-    // In development, the sidecar lives at <project>/sidecar/main.py
-    // In production, it's bundled next to the executable
-    let sidecar_script = if cfg!(debug_assertions) {
-        // Dev mode: look relative to the Cargo project root
+    if cfg!(debug_assertions) {
+        // ── Dev mode ──────────────────────────────────────────────────────
         let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap_or(std::path::Path::new("."));
-        project_root.join("sidecar").join("main.py")
-    } else {
-        exe_dir.join("sidecar").join("main.py")
-    };
+        let sidecar_script = project_root.join("sidecar").join("main.py");
 
-    std::process::Command::new("python")
-        .arg(&sidecar_script)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Failed to spawn sidecar: {e}"))
+        eprintln!(
+            "[AgentArmor Studio] DEV: spawning python {}",
+            sidecar_script.display()
+        );
+
+        std::process::Command::new("python")
+            .arg(&sidecar_script)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Failed to spawn sidecar (dev): {e}"))
+    } else {
+        // ── Release mode ──────────────────────────────────────────────────
+        // The PyInstaller-bundled sidecar exe is placed in the same directory
+        // as the main Tauri executable (via bundle resources).
+        let sidecar_exe = exe_dir.join("agentarmor-sidecar.exe");
+
+        // Fallback: also check the binaries/ subdirectory (Tauri sidecar convention)
+        let sidecar_path = if sidecar_exe.exists() {
+            sidecar_exe
+        } else {
+            let alt = exe_dir.join("binaries").join("agentarmor-sidecar.exe");
+            if alt.exists() {
+                alt
+            } else {
+                // Last resort: check for the triple-named binary
+                let triple_name = exe_dir.join("agentarmor-sidecar-x86_64-pc-windows-msvc.exe");
+                if triple_name.exists() {
+                    triple_name
+                } else {
+                    return Err(format!(
+                        "Sidecar binary not found. Searched:\n  \
+                         - {}\n  \
+                         - {}\n  \
+                         - {}",
+                        sidecar_exe.display(),
+                        exe_dir.join("binaries").join("agentarmor-sidecar.exe").display(),
+                        triple_name.display(),
+                    ));
+                }
+            }
+        };
+
+        eprintln!(
+            "[AgentArmor Studio] RELEASE: spawning {}",
+            sidecar_path.display()
+        );
+
+        std::process::Command::new(&sidecar_path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| {
+                format!(
+                    "Failed to spawn sidecar at {}: {e}",
+                    sidecar_path.display()
+                )
+            })
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -69,13 +154,15 @@ pub fn run() {
                 Ok(child) => {
                     app.manage(SidecarState {
                         child: Mutex::new(Some(child)),
+                        launch_error: Mutex::new(None),
                     });
-                    println!("[AgentArmor Studio] Sidecar started");
+                    eprintln!("[AgentArmor Studio] Sidecar started successfully");
                 }
                 Err(e) => {
-                    eprintln!("[AgentArmor Studio] Warning: {e}");
+                    eprintln!("[AgentArmor Studio] ERROR: {e}");
                     app.manage(SidecarState {
                         child: Mutex::new(None),
+                        launch_error: Mutex::new(Some(e)),
                     });
                 }
             }
@@ -88,7 +175,7 @@ pub fn run() {
                     if let Ok(mut guard) = state.child.lock() {
                         if let Some(ref mut child) = *guard {
                             let _ = child.kill();
-                            println!("[AgentArmor Studio] Sidecar killed");
+                            eprintln!("[AgentArmor Studio] Sidecar killed");
                         }
                     }
                 }
@@ -97,7 +184,7 @@ pub fn run() {
                 let _ = std::fs::remove_file(port_file);
             }
         })
-        .invoke_handler(tauri::generate_handler![get_sidecar_port])
+        .invoke_handler(tauri::generate_handler![get_sidecar_port, get_sidecar_status])
         .run(tauri::generate_context!())
         .expect("error while running AgentArmor Studio");
 }
