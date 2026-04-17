@@ -32,8 +32,9 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller agentarmor
-          pip install uvicorn fastapi httpx pydantic python-dotenv
+          pip install pyinstaller
+          pip install "agentarmor @ git+https://github.com/Agastya910/agentarmor.git"
+          pip install uvicorn fastapi httpx pydantic python-dotenv presidio-analyzer presidio-anonymizer
 
       - name: Build Python sidecar
         working-directory: sidecar
