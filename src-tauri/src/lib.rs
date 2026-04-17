@@ -94,33 +94,27 @@ fn spawn_sidecar() -> Result<std::process::Child, String> {
             .map_err(|e| format!("Failed to spawn sidecar (dev): {e}"))
     } else {
         // ── Release mode ──────────────────────────────────────────────────
-        // The PyInstaller-bundled sidecar exe is placed in the same directory
-        // as the main Tauri executable (via bundle resources).
-        let sidecar_exe = exe_dir.join("agentarmor-sidecar.exe");
+        // Search for the sidecar binary in all likely locations.
+        // Tauri resources can end up next to exe or in a binaries/ subdir,
+        // and the file may be named plain or with the target triple suffix.
+        let candidates = [
+            exe_dir.join("agentarmor-sidecar.exe"),
+            exe_dir.join("agentarmor-sidecar-x86_64-pc-windows-msvc.exe"),
+            exe_dir.join("binaries").join("agentarmor-sidecar.exe"),
+            exe_dir.join("binaries").join("agentarmor-sidecar-x86_64-pc-windows-msvc.exe"),
+        ];
 
-        // Fallback: also check the binaries/ subdirectory (Tauri sidecar convention)
-        let sidecar_path = if sidecar_exe.exists() {
-            sidecar_exe
-        } else {
-            let alt = exe_dir.join("binaries").join("agentarmor-sidecar.exe");
-            if alt.exists() {
-                alt
-            } else {
-                // Last resort: check for the triple-named binary
-                let triple_name = exe_dir.join("agentarmor-sidecar-x86_64-pc-windows-msvc.exe");
-                if triple_name.exists() {
-                    triple_name
-                } else {
-                    return Err(format!(
-                        "Sidecar binary not found. Searched:\n  \
-                         - {}\n  \
-                         - {}\n  \
-                         - {}",
-                        sidecar_exe.display(),
-                        exe_dir.join("binaries").join("agentarmor-sidecar.exe").display(),
-                        triple_name.display(),
-                    ));
-                }
+        let sidecar_path = candidates.iter().find(|p| p.exists());
+
+        let sidecar_path = match sidecar_path {
+            Some(p) => p.clone(),
+            None => {
+                let searched: String = candidates
+                    .iter()
+                    .map(|p| format!("  - {}", p.display()))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                return Err(format!("Sidecar binary not found. Searched:\n{searched}"));
             }
         };
 
