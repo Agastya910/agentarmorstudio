@@ -330,6 +330,7 @@ export default function SettingsPage() {
             ) : apiKeySaved ? (
               <CheckCircle2 className="h-3 w-3 text-emerald-400" />
             ) : (
+              <Key className="h-3 w-3" />
             )}
             {apiKeySaved ? "Saved!" : "Save Keys"}
           </Button>
