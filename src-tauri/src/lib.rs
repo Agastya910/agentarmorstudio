@@ -62,7 +62,6 @@ fn spawn_sidecar() -> Result<std::process::Child, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // Spawn the Python sidecar on app start

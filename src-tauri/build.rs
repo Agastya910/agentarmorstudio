@@ -57,6 +57,17 @@ fn main() {
     println!("cargo:rerun-if-changed={}", sidecar_main.display());
 
     // ── Check if we need to rebuild ────────────────────────────────────────
+    // CI pre-builds the sidecar and stages the binary, so skip PyInstaller.
+    if env::var("SKIP_PYINSTALLER").is_ok() || env::var("CI").is_ok() {
+        if sidecar_binary.exists() {
+            println!("cargo:warning=CI mode: sidecar binary already staged, skipping PyInstaller.");
+            tauri_build::build();
+            return;
+        } else {
+            println!("cargo:warning=CI mode but sidecar binary not found at: {}", sidecar_binary.display());
+        }
+    }
+
     let source_mtime = newest_mtime(&sidecar_dir);
     let binary_mtime = sidecar_binary
         .exists()

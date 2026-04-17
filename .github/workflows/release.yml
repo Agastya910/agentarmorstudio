@@ -32,8 +32,21 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller
-          pip install agentarmor
+          pip install pyinstaller agentarmor
+          pip install uvicorn fastapi httpx pydantic python-dotenv
+
+      - name: Build Python sidecar
+        working-directory: sidecar
+        run: |
+          pyinstaller --noconfirm --distpath dist agentarmor_sidecar.spec
+          ls dist/
+
+      - name: Stage sidecar binary
+        run: |
+          New-Item -ItemType Directory -Force -Path src-tauri/binaries
+          $triple = "x86_64-pc-windows-msvc"
+          Copy-Item "sidecar/dist/agentarmor-sidecar.exe" "src-tauri/binaries/agentarmor-sidecar-$triple.exe"
+          ls src-tauri/binaries/
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

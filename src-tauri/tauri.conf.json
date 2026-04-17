@@ -39,24 +39,13 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "binaries/agentarmor-sidecar-x86_64-pc-windows-msvc.exe"
+      "binaries/*"
     ],
     "windows": {
       "nsis": {
-        "installerIcon": "icons/installer.ico",
-        "headerImage": "icons/header.bmp",
         "displayLanguageSelector": false,
         "installMode": "perMachine"
       }
-    }
-  },
-  "plugins": {
-    "updater": {
-      "active": true,
-      "endpoints": [
-        "https://releases.agentarmor.dev/{{target}}/{{arch}}/latest.json"
-      ],
-      "pubkey": "REPLACE_WITH_YOUR_TAURI_UPDATER_PUBLIC_KEY"
     }
   }
 }
