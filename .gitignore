@@ -1,0 +1,28 @@
+node_modules/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+*.log
+.env
+.DS_Store
+
+# Tauri build artifacts
+src-tauri/target/
+src-tauri/binaries/
+dist/
+
+# PyInstaller artifacts
+sidecar/dist/
+sidecar/build/
+sidecar/*.spec.bak
+
+# Test artifacts
+test_*.log
+fast_test.py
+stress_test.py
+
+# Database
+*.db
+*.db-journal
