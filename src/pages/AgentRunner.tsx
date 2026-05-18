@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import {
+  AlertTriangle,
   Bot,
   CheckCircle2,
   ChevronDown,
@@ -13,6 +14,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   ShieldX,
+  Square,
   Terminal,
   Trash2,
   XCircle,
@@ -149,6 +151,8 @@ function ExecutionTimeline({
           label="L1 Ingestion"
           verdict={l1Event.verdict}
           message={l1Event.message}
+          details={l1Event.details}
+          latencyMs={l1Event.latency_ms}
           isFirst
         />
       )}
@@ -236,6 +240,8 @@ function ExecutionTimeline({
           label="L6 Output"
           verdict={l6FinalEvent.verdict}
           message={l6FinalEvent.message}
+          details={l6FinalEvent.details}
+          latencyMs={l6FinalEvent.latency_ms}
         />
       )}
 
@@ -267,7 +273,7 @@ function ExecutionTimeline({
   );
 }
 
-// Single timeline step
+// Single timeline step. When `details` is present, the row becomes expandable.
 function TimelineStep({
   icon,
   label,
@@ -277,6 +283,8 @@ function TimelineStep({
   isLast,
   isBlocked,
   small,
+  details,
+  latencyMs,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -286,31 +294,165 @@ function TimelineStep({
   isLast?: boolean;
   isBlocked?: boolean;
   small?: boolean;
+  details?: Record<string, unknown>;
+  latencyMs?: number;
 }) {
-  return (
-    <div className={cn("flex items-center gap-2 pl-5 relative", small ? "py-0.5" : "py-1.5")}>
-      {/* Vertical connector line */}
-      {!isFirst && <div className="absolute left-[11px] -top-0 w-px h-2 bg-gray-700" />}
-      {!isLast && <div className="absolute left-[11px] bottom-0 w-px h-2 bg-gray-700" />}
+  const [expanded, setExpanded] = useState(false);
+  const expandable = details !== undefined && Object.keys(details).length > 0;
 
-      {/* Node dot */}
-      <div className={cn(
-        "flex-none -ml-[9px] mr-1.5",
-        small ? "opacity-70" : "",
-      )}>
-        {icon}
+  return (
+    <div>
+      <div
+        className={cn(
+          "flex items-center gap-2 pl-5 relative",
+          small ? "py-0.5" : "py-1.5",
+          expandable && "cursor-pointer hover:bg-gray-800/30 rounded transition-colors",
+        )}
+        onClick={expandable ? () => setExpanded((e) => !e) : undefined}
+      >
+        {/* Vertical connector line */}
+        {!isFirst && <div className="absolute left-[11px] -top-0 w-px h-2 bg-gray-700" />}
+        {!isLast && <div className="absolute left-[11px] bottom-0 w-px h-2 bg-gray-700" />}
+
+        {/* Chevron (only when expandable) */}
+        {expandable && (
+          expanded
+            ? <ChevronDown className="h-3 w-3 text-gray-500 flex-none -ml-3" />
+            : <ChevronRight className="h-3 w-3 text-gray-500 flex-none -ml-3" />
+        )}
+
+        {/* Node dot */}
+        <div className={cn(
+          "flex-none -ml-[9px] mr-1.5",
+          small ? "opacity-70" : "",
+        )}>
+          {icon}
+        </div>
+
+        {/* Label + verdict */}
+        <span className={cn("font-mono flex-none", small ? "text-[10px] text-gray-500" : "text-[11px] text-gray-400")}>
+          {label}
+        </span>
+        <span className="text-[10px] text-gray-700">──</span>
+        <span className={cn("text-[10px] font-semibold", verdictColor(verdict), isBlocked && "animate-pulse")}>
+          {verdictLabel(verdict)}
+        </span>
+        {message && (
+          <span className="text-[10px] text-gray-600 truncate">{message}</span>
+        )}
+        {latencyMs !== undefined && (
+          <span className="text-[9px] text-gray-700 font-mono ml-auto pr-2">{latencyMs}ms</span>
+        )}
       </div>
 
-      {/* Label + verdict */}
-      <span className={cn("font-mono flex-none", small ? "text-[10px] text-gray-500" : "text-[11px] text-gray-400")}>
-        {label}
-      </span>
-      <span className="text-[10px] text-gray-700">──</span>
-      <span className={cn("text-[10px] font-semibold", verdictColor(verdict), isBlocked && "animate-pulse")}>
-        {verdictLabel(verdict)}
-      </span>
-      {message && (
-        <span className="text-[10px] text-gray-600 truncate">{message}</span>
+      {expandable && expanded && (
+        <LayerDetailsPanel details={details!} />
+      )}
+    </div>
+  );
+}
+
+// Drill-down panel showing detector-level findings for a layer.
+function LayerDetailsPanel({ details }: { details: Record<string, unknown> }) {
+  const defensesApplied = details["defenses_applied"] as string[] | undefined;
+  const anomalies = details["anomalies_found"] as Array<Record<string, unknown>> | undefined;
+  const regexMatches = details["regex_categories_matched"] as string[] | undefined;
+  const embeddingSim = details["embedding_similarity"] as number | undefined;
+  const embeddingTemplate = details["embedding_match_template"] as string | undefined;
+  const embeddingCategory = details["embedding_match_category"] as string | undefined;
+  const classifierLabel = details["classifier_label"] as string | undefined;
+  const classifierConf = details["classifier_confidence"] as number | undefined;
+  const perplexity = details["perplexity_score"] as number | undefined;
+  const findings = details["findings"] as Array<Record<string, unknown>> | undefined;
+
+  return (
+    <div className="ml-10 mt-1 mb-2 px-3 py-2 bg-gray-900/50 border border-gray-800 rounded space-y-1 text-[10px] text-gray-400 font-mono">
+      {defensesApplied && defensesApplied.length > 0 && (
+        <div>
+          <span className="text-gray-600">defenses:</span>{" "}
+          <span className="text-brand-300">{defensesApplied.join(" → ")}</span>
+        </div>
+      )}
+      {regexMatches && regexMatches.length > 0 && (
+        <div>
+          <span className="text-gray-600">D2 regex hits:</span>{" "}
+          <span className="text-amber-300">{regexMatches.join(", ")}</span>
+        </div>
+      )}
+      {embeddingSim !== undefined && (
+        <div>
+          <span className="text-gray-600">D5 embedding similarity:</span>{" "}
+          <span className={cn(
+            "font-semibold",
+            embeddingSim >= 0.85 ? "text-red-400" :
+              embeddingSim >= 0.70 ? "text-amber-400" : "text-emerald-400",
+          )}>{embeddingSim.toFixed(3)}</span>
+          {embeddingCategory && (
+            <span className="text-gray-600"> · {embeddingCategory}</span>
+          )}
+        </div>
+      )}
+      {embeddingTemplate && (
+        <div className="text-gray-500 italic truncate" title={embeddingTemplate}>
+          ↳ "{embeddingTemplate.slice(0, 90)}{embeddingTemplate.length > 90 ? "…" : ""}"
+        </div>
+      )}
+      {classifierLabel && classifierLabel !== "UNKNOWN" && (
+        <div>
+          <span className="text-gray-600">D3 classifier:</span>{" "}
+          <span className="text-blue-300">{classifierLabel}</span>
+          {classifierConf !== undefined && (
+            <span className="text-gray-600"> ({(classifierConf * 100).toFixed(1)}%)</span>
+          )}
+        </div>
+      )}
+      {perplexity !== undefined && perplexity !== null && perplexity > 0 && (
+        <div>
+          <span className="text-gray-600">D4 perplexity:</span>{" "}
+          <span className={cn(
+            "font-semibold",
+            perplexity > 1000 ? "text-red-400" : "text-emerald-400",
+          )}>{perplexity.toFixed(1)}</span>
+        </div>
+      )}
+      {anomalies && anomalies.length > 0 && (
+        <div>
+          <span className="text-gray-600">anomalies ({anomalies.length}):</span>
+          <ul className="ml-3 mt-0.5 space-y-0.5">
+            {anomalies.slice(0, 5).map((a, i) => (
+              <li key={i} className="text-gray-500">
+                · {String(a.type ?? "?")}
+                {a.category !== undefined && <span className="text-gray-600"> [{String(a.category)}]</span>}
+                {a.severity !== undefined && <span className="text-amber-500/80"> sev={String(a.severity)}</span>}
+                {a.matched_text !== undefined && (
+                  <span className="text-gray-600 italic"> · "{String(a.matched_text).slice(0, 50)}"</span>
+                )}
+              </li>
+            ))}
+            {anomalies.length > 5 && (
+              <li className="text-gray-700">… +{anomalies.length - 5} more</li>
+            )}
+          </ul>
+        </div>
+      )}
+      {findings && findings.length > 0 && (
+        <div>
+          <span className="text-gray-600">L6 findings ({findings.length}):</span>
+          <ul className="ml-3 mt-0.5 space-y-0.5">
+            {findings.slice(0, 5).map((f, i) => (
+              <li key={i} className="text-gray-500">
+                · {String(f.type ?? f.entity_type ?? "?")}
+                {f.severity !== undefined && <span className="text-amber-500/80"> sev={String(f.severity)}</span>}
+                {f.matched_text !== undefined && (
+                  <span className="text-gray-600 italic"> · "{String(f.matched_text).slice(0, 50)}"</span>
+                )}
+              </li>
+            ))}
+            {findings.length > 5 && (
+              <li className="text-gray-700">… +{findings.length - 5} more</li>
+            )}
+          </ul>
+        </div>
       )}
     </div>
   );
@@ -390,6 +532,47 @@ export default function AgentRunner({ onNavigate }: { onNavigate?: (page: string
   };
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Live run state — what's currently running so the UI can show progress.
+  interface RunState {
+    layer?: string;       // e.g. "L1_ingestion"
+    layerMessage?: string;
+    llmModel?: string;
+    llmStartedAt?: number;
+    runStartedAt?: number;
+  }
+  const [runState, setRunState] = useState<RunState>({});
+
+  // Stuck-detection: track last SSE event timestamp; if no event for >20s, warn.
+  const [stuck, setStuck] = useState(false);
+  const lastEventTsRef = useRef<number>(0);
+
+  // Abort handle for the active stream.
+  const abortRef = useRef<(() => void) | null>(null);
+
+  // Ticking timer for the loading-strip elapsed display.
+  const [, setNowTick] = useState(0);
+  useEffect(() => {
+    if (!loading) return;
+    const id = setInterval(() => setNowTick(t => t + 1), 500);
+    return () => clearInterval(id);
+  }, [loading]);
+
+  // Stuck-detection effect: if no SSE event arrives within 20s of an active run, surface a warning.
+  useEffect(() => {
+    if (!loading) {
+      setStuck(false);
+      return;
+    }
+    const id = setInterval(() => {
+      const last = lastEventTsRef.current;
+      if (last > 0 && Date.now() - last > 20_000) {
+        setStuck(true);
+      }
+    }, 2000);
+    return () => clearInterval(id);
+  }, [loading]);
+
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // ---------------------------------------------------------------------------
@@ -477,7 +660,25 @@ export default function AgentRunner({ onNavigate }: { onNavigate?: (page: string
     let pendingToolName = "";
 
     const onEvent = (event: SSEEvent) => {
-      if (event.type === "layer_check") {
+      lastEventTsRef.current = Date.now();
+      setStuck(false);
+      if (event.type === "layer_start") {
+        setRunState((prev) => ({
+          ...prev,
+          layer: String(event.layer ?? ""),
+          layerMessage: String(event.message ?? ""),
+        }));
+      } else if (event.type === "layer_complete") {
+        setRunState((prev) => (prev.layer === event.layer ? { ...prev, layer: undefined, layerMessage: undefined } : prev));
+      } else if (event.type === "llm_request_start") {
+        setRunState((prev) => ({
+          ...prev,
+          llmModel: String(event.model ?? ""),
+          llmStartedAt: Date.now(),
+        }));
+      } else if (event.type === "llm_response") {
+        setRunState((prev) => ({ ...prev, llmModel: undefined, llmStartedAt: undefined }));
+      } else if (event.type === "layer_check") {
         liveEvents.push(event as unknown as LayerDetail);
         setMessages((prev) => {
           const next = [...prev];
@@ -548,24 +749,32 @@ export default function AgentRunner({ onNavigate }: { onNavigate?: (page: string
       }
     };
 
+    lastEventTsRef.current = Date.now();
+    setRunState({ runStartedAt: Date.now() });
+    setStuck(false);
+
+    const handle = runOllamaAgentStream({
+      model: selectedModel,
+      system_prompt: systemPrompt,
+      user_message: text,
+      conversation_history: messages.map(m => ({ role: m.role, content: m.content })).slice(-10),
+      layers_enabled: Array.from(enabledLayers),
+      agent_id: selectedAgent,
+    }, onEvent);
+    abortRef.current = handle.abort;
+
     try {
-      await runOllamaAgentStream({
-        model: selectedModel,
-        system_prompt: systemPrompt,
-        user_message: text,
-        conversation_history: messages.map(m => ({ role: m.role, content: m.content })).slice(-10),
-        layers_enabled: Array.from(enabledLayers),
-        agent_id: selectedAgent,
-      }, onEvent);
+      await handle.result;
     } catch (err) {
+      const isAbort = err instanceof Error && err.name === "AbortError";
       setMessages((prev) => {
         const next = [...prev];
         next[next.length - 1] = {
           role: "assistant",
-          content: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          content: isAbort ? "⏹ Cancelled by user" : `Error: ${err instanceof Error ? err.message : String(err)}`,
           timestamp: new Date(),
           blocked: true,
-          blocked_by: "client_error",
+          blocked_by: isAbort ? "user_cancelled" : "client_error",
           events: liveEvents,
           tool_calls: liveToolCalls,
         };
@@ -573,7 +782,14 @@ export default function AgentRunner({ onNavigate }: { onNavigate?: (page: string
       });
     } finally {
       setLoading(false);
+      setRunState({});
+      setStuck(false);
+      abortRef.current = null;
     }
+  };
+
+  const handleCancel = () => {
+    abortRef.current?.();
   };
 
   const toggleLayer = (id: number) => {
@@ -866,10 +1082,57 @@ export default function AgentRunner({ onNavigate }: { onNavigate?: (page: string
 
           {loading && (
             <div className="flex gap-3 animate-fade-in">
-              <div className="bg-gray-800/60 rounded-xl rounded-bl-sm px-4 py-3 text-sm text-gray-400 flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin text-brand-400" />
-                <span>Agent running</span>
-                <span className="text-[10px] text-gray-600">• security pipeline active</span>
+              <div className="bg-gray-800/60 rounded-xl rounded-bl-sm px-4 py-3 text-sm text-gray-400 flex flex-col gap-2 min-w-[280px]">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-brand-400" />
+                  {runState.layer ? (
+                    <>
+                      <span className="font-mono text-xs text-gray-200">{runState.layer}</span>
+                      <span className="text-[10px] text-gray-500">{runState.layerMessage}</span>
+                    </>
+                  ) : runState.llmModel ? (
+                    <>
+                      <span className="font-mono text-xs text-gray-200">{runState.llmModel}</span>
+                      <span className="text-[10px] text-gray-500">
+                        waiting on LLM…
+                        {runState.llmStartedAt && (
+                          <span className="ml-1 text-gray-600">
+                            ({Math.round((Date.now() - runState.llmStartedAt) / 1000)}s)
+                          </span>
+                        )}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Agent running</span>
+                      <span className="text-[10px] text-gray-600">• security pipeline active</span>
+                    </>
+                  )}
+                  <Button
+                    type="button"
+                    onClick={handleCancel}
+                    variant="outline"
+                    size="sm"
+                    className="ml-auto h-6 px-2 text-[10px] border-gray-700 text-gray-400 hover:text-red-300 hover:border-red-500/50"
+                  >
+                    <Square className="h-3 w-3 mr-1" />
+                    Cancel
+                  </Button>
+                </div>
+                {runState.runStartedAt && (
+                  <div className="text-[10px] text-gray-600 font-mono">
+                    Elapsed: {Math.round((Date.now() - runState.runStartedAt) / 1000)}s
+                  </div>
+                )}
+                {stuck && (
+                  <div className="flex items-center gap-2 text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">
+                    <AlertTriangle className="h-3 w-3" />
+                    <span>
+                      Sidecar may be stuck — no events for {Math.round((Date.now() - lastEventTsRef.current) / 1000)}s.
+                      Cancel and retry?
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           )}

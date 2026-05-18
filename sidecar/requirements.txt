@@ -1,7 +1,13 @@
 # AgentArmor Studio — Sidecar Dependencies
 # Install with: pip install -r requirements.txt
+#
+# IMPORTANT: agentarmor-core is pinned to an EXACT version. The Studio installer
+# bundles this resolved wheel via PyInstaller, so the installed Studio is
+# decoupled from any subsequent library release. To upgrade the library bundled
+# in the Studio, bump this version AND the matching pin in
+# .github/workflows/release.yml in the same commit.
 
-agentarmor-core
+agentarmor-core[pii]==0.7.0
 fastapi>=0.110
 uvicorn[standard]>=0.27
 httpx>=0.27
@@ -9,4 +15,4 @@ httpx>=0.27
 # Real tool implementations
 tavily-python>=0.5          # Web search (get free key at tavily.com)
 beautifulsoup4>=4.12        # HTML stripping for tool_web_fetch
-e2b-code-interpreter>=1.0  # Code execution sandbox (optional, needs E2B_API_KEY)
+e2b-code-interpreter>=1.0   # Code execution sandbox (optional, needs E2B_API_KEY)

@@ -98,6 +98,16 @@ export interface LayerDetail {
   verdict: string;
   threat_level: string;
   message: string;
+  // Populated by the sidecar for the per-layer expand panel:
+  details?: Record<string, unknown>;
+  latency_ms?: number;
+  timestamp?: string;
+  // L1-specific fields surfaced for the Studio layer-row drill-down.
+  matched_patterns?: string[];
+  similarity_scores?: Record<string, number>;
+  anomalies?: Array<Record<string, unknown>>;
+  started_at?: string;
+  completed_at?: string;
 }
 
 export interface ScanResponse {
@@ -252,60 +262,85 @@ export async function runOllamaAgent(
   });
 }
 
-export type SSEEventType = "layer_check" | "tool_start" | "tool_result" | "final" | "error";
+export type SSEEventType =
+  | "layer_start"
+  | "layer_check"
+  | "layer_complete"
+  | "llm_request_start"
+  | "llm_response"
+  | "tool_start"
+  | "tool_result"
+  | "final"
+  | "error";
+
 export interface SSEEvent {
   type: SSEEventType;
   [key: string]: unknown;
 }
 
+/** Returned by runOllamaAgentStream so callers can mid-run abort. */
+export interface StreamHandle {
+  /** Promise that resolves with the final response or rejects on error/abort. */
+  result: Promise<OllamaAgentRunResponse>;
+  /** Aborts the in-flight stream. The result promise rejects with an AbortError. */
+  abort: () => void;
+}
+
 /** POST /agent/run/stream — streaming SSE version.
- *  Calls onEvent for each event as it fires; resolves with the final response payload.
+ *  Calls onEvent for each event as it fires.
+ *  Returns a {result, abort} handle so the UI can cancel a long-running run.
  */
-export async function runOllamaAgentStream(
+export function runOllamaAgentStream(
   payload: OllamaAgentRunRequest,
   onEvent: (event: SSEEvent) => void,
-): Promise<OllamaAgentRunResponse> {
-  const base = await baseUrl();
+): StreamHandle {
+  const controller = new AbortController();
 
-  const resp = await fetch(`${base}/agent/run/stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  const result = (async () => {
+    const base = await baseUrl();
+    const resp = await fetch(`${base}/agent/run/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
 
-  if (!resp.ok || !resp.body) {
-    throw new Error(`Stream request failed: ${resp.status}`);
-  }
-
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let finalPayload: OllamaAgentRunResponse | null = null;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    // SSE lines are "data: {...}\n\n"
-    const parts = buffer.split("\n\n");
-    buffer = parts.pop() ?? "";
-
-    for (const part of parts) {
-      const line = part.trim();
-      if (!line.startsWith("data:")) continue;
-      try {
-        const event = JSON.parse(line.slice(5).trim()) as SSEEvent;
-        onEvent(event);
-        if (event.type === "final") {
-          finalPayload = event as unknown as OllamaAgentRunResponse;
-        }
-      } catch { /* skip malformed */ }
+    if (!resp.ok || !resp.body) {
+      throw new Error(`Stream request failed: ${resp.status}`);
     }
-  }
 
-  if (!finalPayload) throw new Error("Stream ended without a final event");
-  return finalPayload;
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finalPayload: OllamaAgentRunResponse | null = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE lines are "data: {...}\n\n"
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() ?? "";
+
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith("data:")) continue;
+        try {
+          const event = JSON.parse(line.slice(5).trim()) as SSEEvent;
+          onEvent(event);
+          if (event.type === "final") {
+            finalPayload = event as unknown as OllamaAgentRunResponse;
+          }
+        } catch { /* skip malformed */ }
+      }
+    }
+
+    if (!finalPayload) throw new Error("Stream ended without a final event");
+    return finalPayload;
+  })();
+
+  return { result, abort: () => controller.abort() };
 }
 
 

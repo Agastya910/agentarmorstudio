@@ -104,6 +104,7 @@ const badgeVariant: Record<LayerCard["status"], "success" | "warning" | "destruc
 export default function LayerStatusGrid() {
   const [cards, setCards] = useState<LayerCard[]>(deriveCards(null, {}));
   const [layerConfigs, setLayerConfigs] = useState<LayersResponse | null>(null);
+  const [recentEvents, setRecentEvents] = useState<SecurityEvent[]>([]);
   const [selected, setSelected] = useState<LayerCard | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -118,6 +119,7 @@ export default function LayerStatusGrid() {
         const blockedCounts = countBlockedPerLayer(eventsRes.events);
         setCards(deriveCards(statusRes, blockedCounts));
         setLayerConfigs(layersRes);
+        setRecentEvents(eventsRes.events);
       } catch {
         setCards(deriveCards(null, {}));
       } finally {
@@ -132,6 +134,16 @@ export default function LayerStatusGrid() {
   const configForLayer = (key: LayerKey): Record<string, unknown> | null => {
     if (!layerConfigs) return null;
     return (layerConfigs as Record<string, Record<string, unknown>>)[key] ?? null;
+  };
+
+  const lastRunForLayer = (card: LayerCard): SecurityEvent[] => {
+    // Pull the most-recent layer_result events whose `layer` name matches.
+    return recentEvents
+      .filter((e) =>
+        e.type === "layer_result" &&
+        String(e.layer ?? "").toLowerCase().includes(card.key),
+      )
+      .slice(0, 10);
   };
 
   return (
@@ -233,6 +245,68 @@ export default function LayerStatusGrid() {
                       <span className="text-gray-400">Blocked (24h)</span>
                       <span className="font-mono text-gray-200">{selected.blocked}</span>
                     </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Last 10 runs</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {(() => {
+                      const lastRuns = lastRunForLayer(selected);
+                      if (lastRuns.length === 0) {
+                        return <p className="text-xs text-gray-500">No recent events for this layer.</p>;
+                      }
+                      return (
+                        <ul className="space-y-2 max-h-80 overflow-y-auto">
+                          {lastRuns.map((evt) => {
+                            const verdict = String(evt.verdict ?? "?");
+                            const isBad = verdict === "deny" || verdict === "escalate";
+                            return (
+                              <li
+                                key={String(evt.event_id ?? Math.random())}
+                                className={cn(
+                                  "rounded border px-2 py-1.5 text-xs",
+                                  isBad
+                                    ? "border-red-500/30 bg-red-500/5"
+                                    : "border-gray-800 bg-gray-900/50",
+                                )}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <span
+                                    className={cn(
+                                      "font-mono font-semibold text-[10px] uppercase",
+                                      verdict === "allow" && "text-emerald-400",
+                                      verdict === "deny" && "text-red-400",
+                                      verdict === "escalate" && "text-amber-400",
+                                      verdict === "audit" && "text-blue-400",
+                                    )}
+                                  >
+                                    {verdict}
+                                  </span>
+                                  {evt.threat_level !== undefined && (
+                                    <span className="text-[10px] text-gray-500">
+                                      threat={String(evt.threat_level)}
+                                    </span>
+                                  )}
+                                  {evt.processing_time_ms !== undefined && (
+                                    <span className="ml-auto text-[10px] text-gray-600 font-mono">
+                                      {Number(evt.processing_time_ms).toFixed(0)}ms
+                                    </span>
+                                  )}
+                                </div>
+                                {evt.message !== undefined && (
+                                  <p className="mt-1 text-[10px] text-gray-400 line-clamp-2">
+                                    {String(evt.message)}
+                                  </p>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      );
+                    })()}
                   </CardContent>
                 </Card>
 

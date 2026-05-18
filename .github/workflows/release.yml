@@ -30,10 +30,13 @@ jobs:
           python-version: '3.11'
 
       - name: Install Python dependencies
+        # IMPORTANT: agentarmor-core is pinned to an EXACT version that must
+        # match sidecar/requirements.txt. PyInstaller bundles the resolved
+        # wheel into the .exe, so the installer is self-contained.
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
-          pip install "agentarmor-core[all]"
+          pip install "agentarmor-core[pii]==0.7.0"
           pip install uvicorn fastapi httpx pydantic python-dotenv
 
       - name: Build Python sidecar

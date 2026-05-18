@@ -1,12 +1,12 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::sync::Mutex;
-use tauri::Manager;
+use std::sync::{Arc, Mutex};
+use tauri::{Emitter, Manager};
 
 /// Global state holding the sidecar child process handle and any launch errors.
 struct SidecarState {
-    child: Mutex<Option<std::process::Child>>,
+    child: Arc<Mutex<Option<std::process::Child>>>,
     launch_error: Mutex<Option<String>>,
 }
 
@@ -146,8 +146,46 @@ pub fn run() {
             // Spawn the Python sidecar on app start
             match spawn_sidecar() {
                 Ok(child) => {
+                    let child_arc = Arc::new(Mutex::new(Some(child)));
+
+                    // Watchdog: poll the sidecar process every 2s. If it exits
+                    // unexpectedly, emit a `sidecar-crashed` event so the frontend
+                    // can surface a banner instead of hanging until a request times out.
+                    let watcher_child = child_arc.clone();
+                    let app_handle = app.handle().clone();
+                    std::thread::spawn(move || loop {
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        let mut guard = match watcher_child.lock() {
+                            Ok(g) => g,
+                            Err(_) => break,
+                        };
+                        let exit = match guard.as_mut() {
+                            Some(c) => c.try_wait(),
+                            None => break,
+                        };
+                        match exit {
+                            Ok(Some(status)) => {
+                                let payload = serde_json::json!({
+                                    "exit_status": status.to_string(),
+                                });
+                                let _ = app_handle.emit("sidecar-crashed", payload);
+                                eprintln!(
+                                    "[AgentArmor Studio] Sidecar exited unexpectedly: {status}"
+                                );
+                                break;
+                            }
+                            Ok(None) => continue,
+                            Err(e) => {
+                                eprintln!(
+                                    "[AgentArmor Studio] watchdog try_wait error: {e}"
+                                );
+                                break;
+                            }
+                        }
+                    });
+
                     app.manage(SidecarState {
-                        child: Mutex::new(Some(child)),
+                        child: child_arc,
                         launch_error: Mutex::new(None),
                     });
                     eprintln!("[AgentArmor Studio] Sidecar started successfully");
@@ -155,7 +193,7 @@ pub fn run() {
                 Err(e) => {
                     eprintln!("[AgentArmor Studio] ERROR: {e}");
                     app.manage(SidecarState {
-                        child: Mutex::new(None),
+                        child: Arc::new(Mutex::new(None)),
                         launch_error: Mutex::new(Some(e)),
                     });
                 }

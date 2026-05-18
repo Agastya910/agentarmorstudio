@@ -1346,14 +1346,20 @@ async def agent_run_stream(req: OllamaAgentRequest):
         # ── L1 scan ──
         scan_event = AgentEvent(agent_id="studio", event_type="scan", action="ingestion.scan", input_data=req.user_message)
         armor.audit.log_event(scan_event)
+        yield sse("layer_start", {"layer": "L1_ingestion", "message": "Scanning input for prompt injection", "timestamp": now_iso()})
         t = time.perf_counter()
         l1 = await _run_layer(1, scan_event, enabled)
         sec_ms += (time.perf_counter() - t) * 1000
         if l1:
-            entry = {"layer": l1.layer, "verdict": l1.verdict.value,
-                     "threat_level": l1.threat_level.value, "message": l1.message, "timestamp": now_iso()}
+            entry = {
+                "layer": l1.layer, "verdict": l1.verdict.value,
+                "threat_level": l1.threat_level.value, "message": l1.message,
+                "details": l1.details, "latency_ms": round((time.perf_counter() - t) * 1000),
+                "timestamp": now_iso(),
+            }
             all_events.append(entry)
             studio_db.store_event({**entry, "agent_id": "studio", "_timestamp": time.time()})
+            yield sse("layer_complete", entry)
             yield sse("layer_check", entry)
             if l1.is_blocked:
                 yield sse("final", {"response": "", "blocked": True, "blocked_by": l1.layer,
@@ -1387,12 +1393,24 @@ async def agent_run_stream(req: OllamaAgentRequest):
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 for _iteration in range(10):
+                    llm_t0 = time.perf_counter()
+                    yield sse("llm_request_start", {
+                        "model": req.model, "iteration": _iteration,
+                        "timestamp": now_iso(),
+                    })
                     resp = await client.post(f"{OLLAMA_BASE}/api/chat", json={
                         "model": req.model, "messages": messages, "tools": OLLAMA_TOOLS, "stream": False,
                     })
                     resp.raise_for_status()
                     msg = resp.json().get("message", {})
                     tool_calls = msg.get("tool_calls", [])
+                    yield sse("llm_response", {
+                        "model": req.model, "iteration": _iteration,
+                        "tool_calls_count": len(tool_calls),
+                        "content_len": len(msg.get("content", "")),
+                        "latency_ms": round((time.perf_counter() - llm_t0) * 1000),
+                        "timestamp": now_iso(),
+                    })
 
                     if not tool_calls:
                         final_text = msg.get("content", "")
@@ -1517,17 +1535,21 @@ async def agent_run_stream(req: OllamaAgentRequest):
 
         # ── L6 final response scan ──
         if 6 in enabled and final_text:
+            yield sse("layer_start", {"layer": "L6_output", "message": "Scanning final response", "timestamp": now_iso()})
             t_l6f = time.perf_counter()
             l6 = _get_l6_layer()
             final_text, out_result = l6.process(final_text, conversation_id)
             sec_ms += (time.perf_counter() - t_l6f) * 1000
             l6fe = {
                 "layer": out_result["layer"], "verdict": out_result["verdict"],
-                "threat_level": out_result["threat_level"], "message": f"Scan generated {out_result['findings_count']} findings",
-                "timestamp": now_iso(), "details": out_result
+                "threat_level": out_result["threat_level"],
+                "message": f"Scan generated {out_result['findings_count']} findings",
+                "latency_ms": round((time.perf_counter() - t_l6f) * 1000),
+                "timestamp": now_iso(), "details": out_result,
             }
             all_events.append(l6fe)
             studio_db.store_event({**l6fe, "agent_id": req.agent_id or "studio", "_timestamp": time.time()})
+            yield sse("layer_complete", l6fe)
             yield sse("layer_check", l6fe)
             if out_result["verdict"] == "block":
                 final_text = "[AgentArmor L6 BLOCKED] This response was blocked because it triggered a critical output security rule. The agent may have been manipulated."
