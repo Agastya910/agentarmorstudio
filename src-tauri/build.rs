@@ -73,8 +73,18 @@ fn main() {
     // via the user's interpreter — the bundled .exe is never used. Running
     // PyInstaller on every `cargo run` is wasted work (and fails if the
     // user doesn't happen to have pyinstaller installed).
+    //
+    // Tauri's bundle.resources = ["binaries/*"] requires the glob to match
+    // at least one file, even in dev. Drop a placeholder so dev builds
+    // don't blow up with "didn't match any files".
     if env::var("PROFILE").as_deref() == Ok("debug") {
         println!("cargo:warning=Dev (debug) profile: skipping PyInstaller. Sidecar will run via `python ../sidecar/main.py`.");
+        fs::create_dir_all(&binaries_dir).expect("Failed to create binaries directory");
+        let placeholder = binaries_dir.join(".dev-placeholder");
+        if !placeholder.exists() {
+            fs::write(&placeholder, b"Dev placeholder so Tauri's binaries/* glob always matches.\nReplaced by the real sidecar .exe in release builds.\n")
+                .expect("Failed to write dev placeholder");
+        }
         tauri_build::build();
         return;
     }
