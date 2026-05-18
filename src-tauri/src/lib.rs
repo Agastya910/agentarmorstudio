@@ -10,6 +10,12 @@ struct SidecarState {
     launch_error: Mutex<Option<String>>,
 }
 
+/// Path where the spawned sidecar's stdout + stderr are redirected.
+/// One file, truncated on each app start so each session has fresh logs.
+fn sidecar_log_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("agentarmor_sidecar.log")
+}
+
 /// Tauri command: read the sidecar port from the temp file.
 #[tauri::command]
 fn get_sidecar_port() -> Result<u16, String> {
@@ -29,6 +35,13 @@ fn get_sidecar_port() -> Result<u16, String> {
         "Could not read sidecar port from {}. The sidecar may have failed to start.",
         port_file.display()
     ))
+}
+
+/// Tauri command: return the path of the sidecar log file so the frontend
+/// can surface it when something goes wrong.
+#[tauri::command]
+fn get_sidecar_log_path() -> String {
+    sidecar_log_path().display().to_string()
 }
 
 /// Tauri command: return sidecar diagnostic info for the frontend.
@@ -68,10 +81,27 @@ fn get_sidecar_status(state: tauri::State<SidecarState>) -> Result<String, Strin
 ///
 /// - **Dev mode**: runs `python ../sidecar/main.py`
 /// - **Release mode**: runs the bundled `agentarmor-sidecar.exe` next to the main executable
+///
+/// stdout+stderr are redirected to a fresh log file at `%TEMP%/agentarmor_sidecar.log`
+/// so structlog warnings, print()s, and unhandled tracebacks are recoverable
+/// after the fact (previously they were piped into a buffer nobody read).
 fn spawn_sidecar() -> Result<std::process::Child, String> {
     let exe_dir = std::env::current_exe()
         .map(|p| p.parent().unwrap_or(std::path::Path::new(".")).to_path_buf())
         .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    // Open the log file fresh (truncate) so each app start has a clean log.
+    let log_path = sidecar_log_path();
+    let stdout_log = std::fs::File::create(&log_path)
+        .map_err(|e| format!("Failed to create sidecar log at {}: {e}", log_path.display()))?;
+    let stderr_log = stdout_log
+        .try_clone()
+        .map_err(|e| format!("Failed to clone log handle: {e}"))?;
+
+    eprintln!(
+        "[AgentArmor Studio] Sidecar logs → {} (truncated on each app start)",
+        log_path.display()
+    );
 
     if cfg!(debug_assertions) {
         // ── Dev mode ──────────────────────────────────────────────────────
@@ -86,10 +116,11 @@ fn spawn_sidecar() -> Result<std::process::Child, String> {
         );
 
         std::process::Command::new("python")
+            .arg("-u") // unbuffered so structlog/print show up in the log immediately
             .arg(&sidecar_script)
             .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::from(stdout_log))
+            .stderr(std::process::Stdio::from(stderr_log))
             .spawn()
             .map_err(|e| format!("Failed to spawn sidecar (dev): {e}"))
     } else {
@@ -125,8 +156,8 @@ fn spawn_sidecar() -> Result<std::process::Child, String> {
 
         std::process::Command::new(&sidecar_path)
             .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::from(stdout_log))
+            .stderr(std::process::Stdio::from(stderr_log))
             .spawn()
             .map_err(|e| {
                 format!(
@@ -216,7 +247,11 @@ pub fn run() {
                 let _ = std::fs::remove_file(port_file);
             }
         })
-        .invoke_handler(tauri::generate_handler![get_sidecar_port, get_sidecar_status])
+        .invoke_handler(tauri::generate_handler![
+            get_sidecar_port,
+            get_sidecar_status,
+            get_sidecar_log_path,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running AgentArmor Studio");
 }

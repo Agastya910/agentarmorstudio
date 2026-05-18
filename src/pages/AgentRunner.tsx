@@ -28,6 +28,7 @@ import {
   getAgents,
   getApiKey,
   getOllamaModels,
+  getSidecarLogPath,
   runOllamaAgentStream,
   unregisterAgent,
   type OllamaModel,
@@ -733,11 +734,14 @@ export default function AgentRunner({ onNavigate }: { onNavigate?: (page: string
           return next;
         });
       } else if (event.type === "error") {
+        const msg = String(event.message ?? "Unknown error");
+        // First write the error synchronously so the user sees it immediately,
+        // then upgrade with the log file path once Tauri resolves it.
         setMessages((prev) => {
           const next = [...prev];
           next[next.length - 1] = {
             role: "assistant",
-            content: `Error: ${String(event.message ?? "Unknown error")}`,
+            content: `❌ Sidecar error: ${msg}`,
             timestamp: new Date(),
             blocked: true,
             blocked_by: "stream_error",
@@ -745,6 +749,15 @@ export default function AgentRunner({ onNavigate }: { onNavigate?: (page: string
             tool_calls: liveToolCalls,
           };
           return next;
+        });
+        getSidecarLogPath().then((logPath) => {
+          setMessages((prev) => {
+            const next = [...prev];
+            const last = { ...next[next.length - 1] };
+            last.content = `❌ Sidecar error: ${msg}\n\n_Logs: ${logPath}_`;
+            next[next.length - 1] = last;
+            return next;
+          });
         });
       }
     };
@@ -767,11 +780,15 @@ export default function AgentRunner({ onNavigate }: { onNavigate?: (page: string
       await handle.result;
     } catch (err) {
       const isAbort = err instanceof Error && err.name === "AbortError";
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const logPath = await getSidecarLogPath().catch(() => "%TEMP%/agentarmor_sidecar.log");
       setMessages((prev) => {
         const next = [...prev];
         next[next.length - 1] = {
           role: "assistant",
-          content: isAbort ? "⏹ Cancelled by user" : `Error: ${err instanceof Error ? err.message : String(err)}`,
+          content: isAbort
+            ? "⏹ Cancelled by user"
+            : `❌ Error: ${errMsg}\n\n_Logs: ${logPath}_`,
           timestamp: new Date(),
           blocked: true,
           blocked_by: isAbort ? "user_cancelled" : "client_error",

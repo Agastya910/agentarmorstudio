@@ -35,6 +35,20 @@ async function getSidecarPort(): Promise<number> {
   return _cachedPort;
 }
 
+let _cachedLogPath: string | null = null;
+/** Get the absolute path of the sidecar log file. Returns a generic hint
+ *  outside Tauri (e.g. in browser dev mode). */
+export async function getSidecarLogPath(): Promise<string> {
+  if (_cachedLogPath !== null) return _cachedLogPath;
+  if (isTauri()) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    _cachedLogPath = await invoke<string>("get_sidecar_log_path");
+    return _cachedLogPath;
+  }
+  _cachedLogPath = "%TEMP%/agentarmor_sidecar.log";
+  return _cachedLogPath;
+}
+
 /** Build the base URL for the sidecar. */
 async function baseUrl(): Promise<string> {
   const port = await getSidecarPort();
@@ -313,6 +327,7 @@ export function runOllamaAgentStream(
     const decoder = new TextDecoder();
     let buffer = "";
     let finalPayload: OllamaAgentRunResponse | null = null;
+    let errorEvent: SSEEvent | null = null;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -331,13 +346,33 @@ export function runOllamaAgentStream(
           onEvent(event);
           if (event.type === "final") {
             finalPayload = event as unknown as OllamaAgentRunResponse;
+          } else if (event.type === "error") {
+            errorEvent = event;
           }
         } catch { /* skip malformed */ }
       }
     }
 
-    if (!finalPayload) throw new Error("Stream ended without a final event");
-    return finalPayload;
+    if (finalPayload) return finalPayload;
+    // If the sidecar errored mid-stream, synthesize a final response from the
+    // `error` event so the caller's awaited promise resolves cleanly with the
+    // real error message instead of being wrapped in a generic
+    // "stream ended without a final event" throw.
+    if (errorEvent) {
+      return {
+        response: "",
+        blocked: true,
+        blocked_by: "sidecar_error",
+        error: String(errorEvent.message ?? "Unknown sidecar error"),
+        events: [],
+        tool_calls: [],
+        latency_ms: Number(errorEvent.latency_ms ?? 0),
+        security_overhead_ms: 0,
+      };
+    }
+    throw new Error(
+      "Stream ended without a final event. Check the sidecar log for details.",
+    );
   })();
 
   return { result, abort: () => controller.abort() };
