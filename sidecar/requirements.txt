@@ -1,5 +1,6 @@
 # AgentArmor Studio — Sidecar Dependencies
-# Install with: pip install -r requirements.txt
+# Install with: uv pip install -r requirements.txt
+# (or, with a uv-managed venv: `uv venv && uv pip install -r requirements.txt`)
 #
 # IMPORTANT: agentarmor-core is pinned to an EXACT version. The Studio installer
 # bundles this resolved wheel via PyInstaller, so the installed Studio is

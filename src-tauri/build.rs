@@ -68,6 +68,17 @@ fn main() {
         }
     }
 
+    // ── Dev profile: skip PyInstaller entirely ────────────────────────────
+    // In debug builds, lib.rs spawns `python ../sidecar/main.py` directly
+    // via the user's interpreter — the bundled .exe is never used. Running
+    // PyInstaller on every `cargo run` is wasted work (and fails if the
+    // user doesn't happen to have pyinstaller installed).
+    if env::var("PROFILE").as_deref() == Ok("debug") {
+        println!("cargo:warning=Dev (debug) profile: skipping PyInstaller. Sidecar will run via `python ../sidecar/main.py`.");
+        tauri_build::build();
+        return;
+    }
+
     let source_mtime = newest_mtime(&sidecar_dir);
     let binary_mtime = sidecar_binary
         .exists()
@@ -106,7 +117,7 @@ fn main() {
         .arg(spec_file.to_str().unwrap())
         .current_dir(&sidecar_dir)
         .status()
-        .expect("Failed to execute PyInstaller. Is it installed? Run: pip install pyinstaller");
+        .expect("Failed to execute PyInstaller. Is it installed? Run: uv pip install pyinstaller (or set SKIP_PYINSTALLER=1 if staging the binary externally)");
 
     if !status.success() {
         panic!("PyInstaller failed with exit code: {:?}", status.code());
