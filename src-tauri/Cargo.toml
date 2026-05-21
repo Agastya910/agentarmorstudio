@@ -1,6 +1,6 @@
 [package]
 name = "agentarmor-studio"
-version = "0.1.0"
+version = "0.2.0"
 description = "AgentArmor Studio — Desktop security dashboard for agentic AI"
 authors = ["Agastya Todi"]
 edition = "2021"
