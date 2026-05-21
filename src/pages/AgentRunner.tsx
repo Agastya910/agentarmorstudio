@@ -544,7 +544,8 @@ export default function AgentRunner({ onNavigate }: { onNavigate?: (page: string
   }
   const [runState, setRunState] = useState<RunState>({});
 
-  // Stuck-detection: track last SSE event timestamp; if no event for >20s, warn.
+  // Stuck-detection: track last SSE event timestamp; if no event for >STUCK_THRESHOLD_MS, warn.
+  const STUCK_THRESHOLD_MS = 40_000;
   const [stuck, setStuck] = useState(false);
   const lastEventTsRef = useRef<number>(0);
 
@@ -559,7 +560,7 @@ export default function AgentRunner({ onNavigate }: { onNavigate?: (page: string
     return () => clearInterval(id);
   }, [loading]);
 
-  // Stuck-detection effect: if no SSE event arrives within 20s of an active run, surface a warning.
+  // Stuck-detection effect: if no SSE event arrives within STUCK_THRESHOLD_MS of an active run, surface a warning.
   useEffect(() => {
     if (!loading) {
       setStuck(false);
@@ -567,7 +568,7 @@ export default function AgentRunner({ onNavigate }: { onNavigate?: (page: string
     }
     const id = setInterval(() => {
       const last = lastEventTsRef.current;
-      if (last > 0 && Date.now() - last > 20_000) {
+      if (last > 0 && Date.now() - last > STUCK_THRESHOLD_MS) {
         setStuck(true);
       }
     }, 2000);

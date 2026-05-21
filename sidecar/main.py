@@ -1221,7 +1221,7 @@ async def agent_run(req: OllamaAgentRequest):
                     # Sub-task E: L1 scan tool output
                     if 1 in enabled:
                         t_l1_out = time.perf_counter()
-                        marked_content, scan_res = l1_tools.scan_tool_output(fn_name, result_text, "studio")
+                        marked_content, scan_res = await l1_tools.scan_tool_output(fn_name, result_text, "studio")
                         sec_ms += (time.perf_counter() - t_l1_out) * 1000
                         l1_evt = {
                             "layer": "L1-Indirect", "verdict": scan_res["verdict"],
@@ -1476,7 +1476,7 @@ async def agent_run_stream(req: OllamaAgentRequest):
                         # Sub-task E: L1 scan tool output
                         if 1 in enabled:
                             t_l1_out = time.perf_counter()
-                            marked_content, scan_res = l1_tools.scan_tool_output(fn_name, result_text, "studio")
+                            marked_content, scan_res = await l1_tools.scan_tool_output(fn_name, result_text, "studio")
                             sec_ms += (time.perf_counter() - t_l1_out) * 1000
                             l1_evt = {
                                 "layer": "L1-Indirect", "verdict": scan_res["verdict"],
